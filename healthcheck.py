@@ -99,35 +99,38 @@ def ping_bedrock(environ: Environ, start_time: int, timeout: float = 1.0) -> boo
         sock.close()
 
 
+def healthcheck_minecraft_server(environ: Environ, healthcheck_result: HealthcheckResult, start_time: int) -> None:
+    logger.info(
+        f"Attempting healthcheck {environ.minecraft_host}:{environ.minecraft_port}"
+    )
+    healthcheck_result.mark_attempt()
+    try:
+        healthy = ping_bedrock(environ, start_time)
+        logger.info("Healthcheck succeeded")
+        healthcheck_result.mark_healthy()
+    except Exception:
+        logger.error("Healthcheck failed", exc_info=True)
+        healthcheck_result.mark_unhealthy()
+
+
 def ping_minecraft_server_main(environ: Environ, shutdown: Event) -> None:
     healthcheck_result = HealthcheckResult("minecraft:healthcheck")
     start_time = int(time.time() * 1000)
     time_since_last_ping = 0.0
     last_time = time.monotonic()
     while not shutdown.is_set():
-        now = time.monotonic()
-        time_since_last_ping -= now - last_time
-        last_time = now
+        try:
+            now = time.monotonic()
+            time_since_last_ping -= now - last_time
+            last_time = now
 
-        if time_since_last_ping <= 0.0:
-            time_since_last_ping = 1.0
-            logger.info(
-                f"Attempting healthcheck {environ.minecraft_host}:{environ.minecraft_port}"
-            )
-            healthcheck_result.mark_attempt()
-            try:
-                healthy = ping_bedrock(environ, start_time)
-            except ConnectionRefusedError:
-                healthy = False
+            if time_since_last_ping <= 0.0:
+                time_since_last_ping = 1.0
+                healthcheck_minecraft_server(environ, healthcheck_result, start_time)
 
-            if healthy:
-                logger.info("Healthcheck succeeded")
-                healthcheck_result.mark_healthy()
-            else:
-                logger.error("Healthcheck failed", exc_info=True)
-                healthcheck_result.mark_unhealthy()
-
-        time.sleep(0.1)
+            time.sleep(0.1)
+        except Exception:
+            logger.error("Encountered unexpected error", exc_info=True)
 
 
 def signal_handler(shutdown: Event) -> Callable[..., None]:
